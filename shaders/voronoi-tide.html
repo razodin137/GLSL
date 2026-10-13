@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Voronoi Tide</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        canvas { width: 100%; height: 100%; display: block; }
+        .hint {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: rgba(255,255,255,0.4);
+            text-align: right;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="glcanvas"></canvas>
+    <div class="hint">
+        HORIZONTAL: CELL DENSITY<br>
+        VERTICAL: TIDE ENERGY
+    </div>
+    <script type="x-shader/x-vertex" id="vs">
+        attribute vec2 position;
+        void main() { gl_Position = vec4(position, 0.0, 1.0); }
+    </script>
+    <script type="x-shader/x-fragment" id="fs">
+        precision highp float;
+        uniform vec2 u_resolution;
+        uniform vec2 u_mouse;
+        uniform float u_time;
+
+        vec2 hash2(vec2 p) {
+            p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+            return -1.0 + 2.0 * fract(sin(p) * 43758.5453123);
+        }
+
+        float hash1(vec2 p) {
+            return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+        }
+
+        vec3 palette(in float t, in vec3 a, in vec3 b, in vec3 c, in vec3 d) {
+            return a + b * cos(6.28318 * (c * t + d));
+        }
+
+        void main() {
+            vec2 st = gl_FragCoord.xy / u_resolution.xy;
+            st.x *= u_resolution.x / u_resolution.y;
+
+            // MOUSE INTERACTION
+            // Mouse X: number of cells across the screen
+            // Mouse Y: drift speed of the seed points and glow width
+            float density = 3.0 + u_mouse.x * 12.0;
+            float energy = 0.05 + u_mouse.y * 0.9;
+
+            vec2 p = st * density;
+            vec2 i = floor(p);
+            vec2 f = fract(p);
+
+            // Voronoi: nearest and second-nearest seed distances
+            float f1 = 8.0;
+            float f2 = 8.0;
+            vec2 cellId = vec2(0.0);
+
+            for (int y = -1; y <= 1; y++) {
+                for (int x = -1; x <= 1; x++) {
+                    vec2 neighbor = vec2(float(x), float(y));
+                    vec2 point = hash2(i + neighbor);
+                    point = 0.5 + 0.5 * sin(u_time * energy + 6.28318 * point);
+                    vec2 diff = neighbor + point - f;
+                    float dist = length(diff);
+                    if (dist < f1) {
+                        f2 = f1;
+                        f1 = dist;
+                        cellId = i + neighbor;
+                    } else if (dist < f2) {
+                        f2 = dist;
+                    }
+                }
+            }
+
+            // Cell body color, keyed by cell id, slowly drifting
+            float seed = hash1(cellId);
+            vec3 col = palette(
+                seed + u_time * 0.02,
+                vec3(0.5, 0.5, 0.5),
+                vec3(0.5, 0.5, 0.5),
+                vec3(1.0, 1.0, 1.0),
+                vec3(0.0, 0.33, 0.67)
+            );
+
+            // Dark veins + warm glow along cell borders (F2 - F1 metric)
+            float edge = f2 - f1;
+            float glowWidth = 0.02 + u_mouse.y * 0.15;
+            float border = smoothstep(0.0, glowWidth, edge);
+            col *= mix(0.12, 1.0, border);
+            col += vec3(1.0, 0.85, 0.5) * pow(1.0 - border, 3.0) * 0.9;
+
+            // Soft brightening near each seed point
+            col += col * smoothstep(0.3, 0.0, f1) * 0.35;
+
+            gl_FragColor = vec4(col, 1.0);
+        }
+    </script>
+    <script>
+        const canvas = document.getElementById('glcanvas');
+        const gl = canvas.getContext('webgl');
+        const program = gl.createProgram();
+
+        const createShader = (type, source) => {
+            const s = gl.createShader(type);
+            gl.shaderSource(s, source);
+            gl.compileShader(s);
+            if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+                console.error(gl.getShaderInfoLog(s));
+            }
+            return s;
+        };
+
+        gl.attachShader(program, createShader(gl.VERTEX_SHADER, document.getElementById('vs').innerText));
+        gl.attachShader(program, createShader(gl.FRAGMENT_SHADER, document.getElementById('fs').innerText));
+        gl.linkProgram(program);
+        gl.useProgram(program);
+
+        const buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]), gl.STATIC_DRAW);
+
+        const pos = gl.getAttribLocation(program, "position");
+        gl.enableVertexAttribArray(pos);
+        gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+
+        const uRes = gl.getUniformLocation(program, "u_resolution");
+        const uMouse = gl.getUniformLocation(program, "u_mouse");
+        const uTime = gl.getUniformLocation(program, "u_time");
+
+        let mx = 0.5, my = 0.5;
+        window.addEventListener('mousemove', e => {
+            mx = e.clientX / window.innerWidth;
+            my = 1.0 - (e.clientY / window.innerHeight); // Flip Y
+        });
+
+        function render(time) {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.uniform2f(uRes, canvas.width, canvas.height);
+            gl.uniform2f(uMouse, mx, my);
+            gl.uniform1f(uTime, time * 0.001);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            requestAnimationFrame(render);
+        }
+        requestAnimationFrame(render);
+    </script>
+</body>
+</html>
