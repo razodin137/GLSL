@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Ripple Tank</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
+        .hint {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: rgba(255,255,255,0.4);
+            text-align: right;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="glcanvas"></canvas>
+    <div class="hint">
+        HORIZONTAL: WAVE ENERGY &nbsp; VERTICAL: WATER HUE<br>
+        CLICK: DROP A STONE (LAST 8 REMEMBERED)
+    </div>
+    <script type="x-shader/x-vertex" id="vs">
+        attribute vec2 position;
+        void main() { gl_Position = vec4(position, 0.0, 1.0); }
+    </script>
+    <script type="x-shader/x-fragment" id="fs">
+        precision highp float;
+        uniform vec2 u_resolution;
+        uniform vec2 u_mouse;
+        uniform float u_time;
+        uniform vec3 u_clicks[8];  // xy: position (st space), z: click time
+
+        float hash(in vec2 p) {
+            return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+        }
+
+        float noise(in vec2 p) {
+            vec2 i = floor(p);
+            vec2 f = fract(p);
+            vec2 u = f * f * (3.0 - 2.0 * f);
+            float a = hash(i);
+            float b = hash(i + vec2(1.0, 0.0));
+            float c = hash(i + vec2(0.0, 1.0));
+            float d = hash(i + vec2(1.0, 1.0));
+            return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+        }
+
+        float fbm(in vec2 p) {
+            float v = 0.0;
+            float amp = 0.5;
+            for (int i = 0; i < 4; i++) {
+                v += amp * noise(p);
+                p = p * 2.0 + vec2(43.0);
+                amp *= 0.5;
+            }
+            return v;
+        }
+
+        // Water surface height at point st
+        float height(vec2 st, float energy) {
+            // Ambient swell
+            float h = fbm(st * 3.0 + vec2(u_time * 0.3, u_time * 0.13)) * 0.6 * energy;
+            h += sin(st.x * 8.0 + u_time) * 0.03;
+
+            // Cursor wake: shimmering bump follows the mouse
+            vec2 m = u_mouse;
+            m.x *= u_resolution.x / u_resolution.y;
+            float dm = length(st - m);
+            h += 0.08 * exp(-dm * dm * 40.0) * sin(u_time * 4.0) * energy;
+
+            // Click ripples: expanding rings that decay
+            for (int i = 0; i < 8; i++) {
+                vec3 clk = u_clicks[i];
+                if (clk.z <= 0.0) continue;
+                float dt = u_time - clk.z;
+                if (dt < 0.0 || dt > 4.0) continue;
+                float r = length(st - clk.xy);
+                float front = dt * 0.5;
+                float wave = sin(30.0 * (r - front)) * exp(-r * 2.0)
+                           * exp(-dt * 1.1) * step(r, front + 0.15);
+                h += wave * 0.35;
+            }
+            return h;
+        }
+
+        void main() {
+            vec2 st = gl_FragCoord.xy / u_resolution.xy;
+            st.x *= u_resolution.x / u_resolution.y;
+
+            // MOUSE INTERACTION
+            // Mouse X: ambient wave energy, Mouse Y: water hue
+            float energy = 0.3 + u_mouse.x * 1.2;
+            float hue = u_mouse.y;
+
+            // Surface normal from finite differences
+            float e = 0.004;
+            float hC = height(st, energy);
+            float hX = height(st + vec2(e, 0.0), energy);
+            float hY = height(st + vec2(0.0, e), energy);
+            vec3 n = normalize(vec3(hC - hX, hC - hY, e * 4.0));
+
+            // Refracted "underwater" caustic layer, offset by the normal
+            vec2 rp = st * 4.0 + n.xy * 6.0;
+            float caustic = fbm(rp + vec2(u_time * 0.2, -u_time * 0.15));
+            caustic = pow(1.0 - abs(caustic * 2.0 - 1.0), 3.0);
+
+            vec3 deep = palette(hue, vec3(0.02, 0.08, 0.15), vec3(0.1, 0.2, 0.25),
+                                vec3(1.0), vec3(0.0, 0.1, 0.2));
+            vec3 shallow = palette(hue, vec3(0.1, 0.4, 0.5), vec3(0.3, 0.3, 0.3),
+                                   vec3(1.0), vec3(0.0, 0.2, 0.3));
+            vec3 water = mix(deep, shallow, caustic * 0.8 + 0.2);
+
+            // Lighting: soft diffuse + sharp specular on wave crests
+            vec3 lightDir = normalize(vec3(0.4, 0.6, 0.7));
+            float diff = max(dot(n, lightDir), 0.0);
+            float spec = pow(max(dot(reflect(-lightDir, n), vec3(0.0, 0.0, 1.0)), 0.0), 60.0);
+
+            vec3 col = water * (0.35 + diff * 0.75) + spec * vec3(1.0, 0.95, 0.85) * 0.8;
+            col += vec3(0.05, 0.12, 0.18) * (1.0 - st.y / (u_resolution.x / u_resolution.y));
+
+            gl_FragColor = vec4(col, 1.0);
+        }
+    </script>
+    <script>
+        const canvas = document.getElementById('glcanvas');
+        const gl = canvas.getContext('webgl');
+        const program = gl.createProgram();
+
+        const createShader = (type, source) => {
+            const s = gl.createShader(type);
+            gl.shaderSource(s, source);
+            gl.compileShader(s);
+            if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+                console.error(gl.getShaderInfoLog(s));
+            }
+            return s;
+        };
+
+        gl.attachShader(program, createShader(gl.VERTEX_SHADER, document.getElementById('vs').innerText));
+        gl.attachShader(program, createShader(gl.FRAGMENT_SHADER, document.getElementById('fs').innerText));
+        gl.linkProgram(program);
+        gl.useProgram(program);
+
+        const buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]), gl.STATIC_DRAW);
+
+        const pos = gl.getAttribLocation(program, "position");
+        gl.enableVertexAttribArray(pos);
+        gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+
+        const uRes = gl.getUniformLocation(program, "u_resolution");
+        const uMouse = gl.getUniformLocation(program, "u_mouse");
+        const uTime = gl.getUniformLocation(program, "u_time");
+        const uClicks = gl.getUniformLocation(program, "u_clicks");
+
+        let mx = 0.5, my = 0.5;
+        window.addEventListener('mousemove', e => {
+            mx = e.clientX / window.innerWidth;
+            my = 1.0 - (e.clientY / window.innerHeight); // Flip Y
+        });
+
+        // Ring buffer of the last 8 clicks, in aspect-corrected st space
+        const clicks = new Float32Array(24);
+        let clickIdx = 0;
+        canvas.addEventListener('click', e => {
+            const aspect = window.innerWidth / window.innerHeight;
+            clicks[clickIdx * 3]     = (e.clientX / window.innerWidth) * aspect;
+            clicks[clickIdx * 3 + 1] = 1.0 - (e.clientY / window.innerHeight);
+            clicks[clickIdx * 3 + 2] = performance.now() * 0.001;
+            clickIdx = (clickIdx + 1) % 8;
+        });
+
+        function render(time) {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.uniform2f(uRes, canvas.width, canvas.height);
+            gl.uniform2f(uMouse, mx, my);
+            gl.uniform1f(uTime, time * 0.001);
+            gl.uniform3fv(uClicks, clicks);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            requestAnimationFrame(render);
+        }
+        requestAnimationFrame(render);
+    </script>
+</body>
+</html>

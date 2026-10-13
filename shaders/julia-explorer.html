@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Julia Forge</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
+        .hint {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: rgba(255,255,255,0.4);
+            text-align: right;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="glcanvas"></canvas>
+    <div class="hint">
+        HORIZONTAL: ZOOM &nbsp; VERTICAL: HUE<br>
+        CLICK: MORPH MANDELBROT &harr; JULIA
+    </div>
+    <script type="x-shader/x-vertex" id="vs">
+        attribute vec2 position;
+        void main() { gl_Position = vec4(position, 0.0, 1.0); }
+    </script>
+    <script type="x-shader/x-fragment" id="fs">
+        precision highp float;
+        uniform vec2 u_resolution;
+        uniform vec2 u_mouse;
+        uniform float u_time;
+        uniform float u_juliaMix;  // 0.0 = Mandelbrot, 1.0 = Julia
+        uniform vec2 u_juliaC;     // Julia constant picked by the last click
+
+        vec3 palette(in float t, in vec3 a, in vec3 b, in vec3 c, in vec3 d) {
+            return a + b * cos(6.28318 * (c * t + d));
+        }
+
+        // Returns (smooth iteration count, orbit trap)
+        vec2 iterate(vec2 z0, vec2 c) {
+            vec2 z = z0;
+            float trap = 1e9;
+            float iter = 0.0;
+            for (int i = 0; i < 128; i++) {
+                z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
+                // Orbit trap: closest approach to the line y = x
+                trap = min(trap, abs(z.y - z.x));
+                if (dot(z, z) > 256.0) break;
+                iter += 1.0;
+            }
+            if (iter > 127.5) return vec2(128.0, trap);
+            // Smooth iteration count
+            float sn = iter - log2(log2(dot(z, z))) + 4.0;
+            return vec2(sn, trap);
+        }
+
+        void main() {
+            vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+
+            // MOUSE INTERACTION
+            // Mouse X: zoom (1x .. 1000x), Mouse Y: hue drift
+            float zoom = exp(u_mouse.x * 6.9);
+            float hue = u_mouse.y;
+
+            // View: Mandelbrot centered near -0.55, Julia centered at 0
+            vec2 anchor = mix(vec2(-0.55, 0.0), vec2(0.0, 0.0), u_juliaMix);
+            vec2 c_plane = uv * 1.6 / zoom + anchor;
+
+            // Mandelbrot pass: z starts at 0, c is the pixel
+            vec2 m = iterate(vec2(0.0), c_plane);
+            // Julia pass: z starts at the pixel, c is the clicked constant
+            vec2 j = iterate(c_plane, u_juliaC);
+
+            vec3 a = vec3(0.5, 0.5, 0.5);
+            vec3 b = vec3(0.5, 0.5, 0.5);
+            vec3 cc = vec3(1.0, 1.0, 1.0);
+            vec3 d = vec3(0.0, 0.1, 0.2) + hue;
+
+            // Color each set from its smooth count + orbit trap filaments
+            float trapM = clamp(m.y * 2.0, 0.0, 1.0);
+            vec3 colM = palette(m.x * 0.04 + u_time * 0.02, a, b, cc, d);
+            colM = mix(colM, vec3(0.0), step(127.9, m.x));       // interior black
+            colM += vec3(1.0, 0.8, 0.4) * pow(1.0 - trapM, 6.0) * 0.6;
+
+            float trapJ = clamp(j.y * 2.0, 0.0, 1.0);
+            vec3 colJ = palette(j.x * 0.04 + 0.3 + u_time * 0.02, a, b, cc, d + 0.15);
+            colJ = mix(colJ, vec3(0.0), step(127.9, j.x));
+            colJ += vec3(0.7, 0.9, 1.0) * pow(1.0 - trapJ, 6.0) * 0.6;
+
+            vec3 col = mix(colM, colJ, u_juliaMix);
+
+            // Soft vignette
+            col *= 1.0 - 0.35 * smoothstep(0.5, 1.4, length(uv));
+
+            gl_FragColor = vec4(col, 1.0);
+        }
+    </script>
+    <script>
+        const canvas = document.getElementById('glcanvas');
+        const gl = canvas.getContext('webgl');
+        const program = gl.createProgram();
+
+        const createShader = (type, source) => {
+            const s = gl.createShader(type);
+            gl.shaderSource(s, source);
+            gl.compileShader(s);
+            if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+                console.error(gl.getShaderInfoLog(s));
+            }
+            return s;
+        };
+
+        gl.attachShader(program, createShader(gl.VERTEX_SHADER, document.getElementById('vs').innerText));
+        gl.attachShader(program, createShader(gl.FRAGMENT_SHADER, document.getElementById('fs').innerText));
+        gl.linkProgram(program);
+        gl.useProgram(program);
+
+        const buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]), gl.STATIC_DRAW);
+
+        const pos = gl.getAttribLocation(program, "position");
+        gl.enableVertexAttribArray(pos);
+        gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+
+        const uRes = gl.getUniformLocation(program, "u_resolution");
+        const uMouse = gl.getUniformLocation(program, "u_mouse");
+        const uTime = gl.getUniformLocation(program, "u_time");
+        const uJuliaMix = gl.getUniformLocation(program, "u_juliaMix");
+        const uJuliaC = gl.getUniformLocation(program, "u_juliaC");
+
+        let mx = 0.5, my = 0.5;
+        window.addEventListener('mousemove', e => {
+            mx = e.clientX / window.innerWidth;
+            my = 1.0 - (e.clientY / window.innerHeight); // Flip Y
+        });
+
+        // Click: morph between the Mandelbrot set and the Julia set whose
+        // constant is the clicked point on the complex plane.
+        let juliaTarget = 0.0;   // where u_juliaMix is heading
+        let juliaMix = 0.0;
+        let juliaC = [0.0, 0.0];
+        canvas.addEventListener('click', e => {
+            if (juliaTarget < 0.5) {
+                // Map the click into the current Mandelbrot view
+                const zoom = Math.exp(mx * 6.9);
+                const aspect = canvas.width / canvas.height;
+                const cx = (e.clientX / window.innerWidth - 0.5) * aspect;
+                const cy = (1.0 - e.clientY / window.innerHeight - 0.5);
+                juliaC = [cx * 1.6 / zoom - 0.55, cy * 1.6 / zoom];
+                juliaTarget = 1.0;
+            } else {
+                juliaTarget = 0.0;
+            }
+        });
+
+        function render(time) {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+
+            // Ease the Mandelbrot<->Julia crossfade
+            juliaMix += (juliaTarget - juliaMix) * 0.08;
+
+            gl.uniform2f(uRes, canvas.width, canvas.height);
+            gl.uniform2f(uMouse, mx, my);
+            gl.uniform1f(uTime, time * 0.001);
+            gl.uniform1f(uJuliaMix, juliaMix);
+            gl.uniform2f(uJuliaC, juliaC[0], juliaC[1]);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            requestAnimationFrame(render);
+        }
+        requestAnimationFrame(render);
+    </script>
+</body>
+</html>

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Hex Circuit</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
+        .hint {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: rgba(255,255,255,0.4);
+            text-align: right;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="glcanvas"></canvas>
+    <div class="hint">
+        HORIZONTAL: GRID DENSITY &nbsp; VERTICAL: SIGNAL HUE<br>
+        CLICK: SEND A PULSE (LAST 8 REMEMBERED)
+    </div>
+    <script type="x-shader/x-vertex" id="vs">
+        attribute vec2 position;
+        void main() { gl_Position = vec4(position, 0.0, 1.0); }
+    </script>
+    <script type="x-shader/x-fragment" id="fs">
+        precision highp float;
+        uniform vec2 u_resolution;
+        uniform vec2 u_mouse;
+        uniform float u_time;
+        uniform vec3 u_clicks[8];  // xy: position (st space), z: click time
+
+        float hash(in vec2 p) {
+            return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+        }
+
+        // Hex grid: returns local coords in gv and cell id in id
+        void hexCoords(in vec2 p, out vec2 gv, out vec2 id) {
+            vec2 r = vec2(1.0, 1.7320508);
+            vec2 h = r * 0.5;
+            vec2 a = mod(p, r) - h;
+            vec2 b = mod(p - h, r) - h;
+            gv = dot(a, a) < dot(b, b) ? a : b;
+            id = p - gv;
+        }
+
+        // Signed distance-ish measure: 0 at hex center, ~0.5 at border
+        float hexDist(vec2 p) {
+            p = abs(p);
+            return max(dot(p, normalize(vec2(1.0, 1.7320508))), p.x);
+        }
+
+        vec3 palette(in float t, in vec3 a, in vec3 b, in vec3 c, in vec3 d) {
+            return a + b * cos(6.28318 * (c * t + d));
+        }
+
+        void main() {
+            vec2 st = gl_FragCoord.xy / u_resolution.xy;
+            st.x *= u_resolution.x / u_resolution.y;
+
+            // MOUSE INTERACTION
+            // Mouse X: hex density, Mouse Y: signal hue
+            float density = 6.0 + u_mouse.x * 18.0;
+            float hue = u_mouse.y;
+
+            vec2 gv, id;
+            hexCoords(st * density, gv, id);
+            float cell = hexDist(gv);                    // 0 center .. 0.5 border
+            float border = smoothstep(0.42, 0.5, cell);  // near cell edge
+            float core = smoothstep(0.30, 0.0, cell);    // near cell center
+
+            // Per-cell random circuit state: which cells "conduct" idle pulses
+            float cellHash = hash(id);
+            float conductive = step(0.55, cellHash);
+            float idlePhase = hash(id + 13.7) * 6.28318;
+
+            // Ambient traveling shimmer across the board
+            float shimmer = sin(id.x * 0.7 + id.y * 0.4 + u_time * 2.0 + idlePhase)
+                          * 0.5 + 0.5;
+            shimmer *= conductive;
+
+            // Click pulses: expanding rings that light hexes they cross
+            float pulse = 0.0;
+            for (int i = 0; i < 8; i++) {
+                vec3 clk = u_clicks[i];
+                if (clk.z <= 0.0) continue;
+                float dt = u_time - clk.z;
+                if (dt < 0.0 || dt > 5.0) continue;
+                // Distance from click to this cell's center (in st space)
+                float r = length(id / density - clk.xy);
+                float front = dt * 0.45;
+                float ring = exp(-abs(r - front) * 28.0) * exp(-dt * 0.9);
+                // Residual glow: cells already crossed keep a fading charge
+                float lit = step(r, front) * exp(-dt * 1.4) * (1.0 - exp(-r * 6.0));
+                pulse += (ring * 1.4 + lit * 0.5) * conductive;
+            }
+            pulse = min(pulse, 2.0);
+
+            // Cursor proximity lights the neighborhood
+            vec2 m = u_mouse;
+            m.x *= u_resolution.x / u_resolution.y;
+            float nearCursor = exp(-length(id / density - m) * 8.0);
+
+            vec3 signal = palette(hue + cellHash * 0.3,
+                                  vec3(0.3), vec3(0.6), vec3(1.0), vec3(0.0, 0.25, 0.5));
+
+            // Compose: dark substrate, faint grid, lit traces
+            vec3 col = vec3(0.015, 0.02, 0.04);
+            col += signal * border * (0.10 + shimmer * 0.25);           // idle traces
+            col += signal * (border * 1.6 + core * 0.8) * pulse;        // click pulses
+            col += signal * (border + core * 0.5) * nearCursor * 0.5;   // cursor glow
+            col += vec3(1.0) * border * pulse * 0.15;                   // hot rim
+
+            gl_FragColor = vec4(col, 1.0);
+        }
+    </script>
+    <script>
+        const canvas = document.getElementById('glcanvas');
+        const gl = canvas.getContext('webgl');
+        const program = gl.createProgram();
+
+        const createShader = (type, source) => {
+            const s = gl.createShader(type);
+            gl.shaderSource(s, source);
+            gl.compileShader(s);
+            if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+                console.error(gl.getShaderInfoLog(s));
+            }
+            return s;
+        };
+
+        gl.attachShader(program, createShader(gl.VERTEX_SHADER, document.getElementById('vs').innerText));
+        gl.attachShader(program, createShader(gl.FRAGMENT_SHADER, document.getElementById('fs').innerText));
+        gl.linkProgram(program);
+        gl.useProgram(program);
+
+        const buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]), gl.STATIC_DRAW);
+
+        const pos = gl.getAttribLocation(program, "position");
+        gl.enableVertexAttribArray(pos);
+        gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+
+        const uRes = gl.getUniformLocation(program, "u_resolution");
+        const uMouse = gl.getUniformLocation(program, "u_mouse");
+        const uTime = gl.getUniformLocation(program, "u_time");
+        const uClicks = gl.getUniformLocation(program, "u_clicks");
+
+        let mx = 0.5, my = 0.5;
+        window.addEventListener('mousemove', e => {
+            mx = e.clientX / window.innerWidth;
+            my = 1.0 - (e.clientY / window.innerHeight); // Flip Y
+        });
+
+        // Ring buffer of the last 8 clicks, in aspect-corrected st space
+        const clicks = new Float32Array(24);
+        let clickIdx = 0;
+        canvas.addEventListener('click', e => {
+            const aspect = window.innerWidth / window.innerHeight;
+            clicks[clickIdx * 3]     = (e.clientX / window.innerWidth) * aspect;
+            clicks[clickIdx * 3 + 1] = 1.0 - (e.clientY / window.innerHeight);
+            clicks[clickIdx * 3 + 2] = performance.now() * 0.001;
+            clickIdx = (clickIdx + 1) % 8;
+        });
+
+        function render(time) {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.uniform2f(uRes, canvas.width, canvas.height);
+            gl.uniform2f(uMouse, mx, my);
+            gl.uniform1f(uTime, time * 0.001);
+            gl.uniform3fv(uClicks, clicks);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            requestAnimationFrame(render);
+        }
+        requestAnimationFrame(render);
+    </script>
+</body>
+</html>
