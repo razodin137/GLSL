@@ -3,53 +3,331 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GLSL</title>
+<title>GLSL · Shader Gallery</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff4d6d'/%3E%3Cstop offset='.5' stop-color='%234dd6ff'/%3E%3Cstop offset='1' stop-color='%23b06dff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='%230b0d12'/%3E%3Ccircle cx='32' cy='32' r='17' fill='none' stroke='url(%23g)' stroke-width='6'/%3E%3C/svg%3E">
 <style>
-  :root { color-scheme: light dark; }
+  :root {
+    color-scheme: dark;
+    --bg: #0a0c10;
+    --panel: #10141b;
+    --border: #232a35;
+    --text: #e6e9ef;
+    --muted: #98a2b3;
+    --accent: #4dd6ff;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-    max-width: 46rem;
-    margin: 2rem auto;
-    padding: 0 1rem;
-    line-height: 1.65;
+    line-height: 1.6;
   }
-  a { color: #0969da; }
-  @media (prefers-color-scheme: dark) { a { color: #4493f8; } }
-  pre {
-    background: #f6f8fa; border-radius: 6px; padding: 1rem;
-    overflow-x: auto; font-size: 0.875rem;
-  }
-  @media (prefers-color-scheme: dark) { pre { background: #151b23; } }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
   code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
-  table { border-collapse: collapse; }
-  th, td { border: 1px solid #d0d7de; padding: 0.375rem 0.75rem; }
-  th { background: #f6f8fa; }
-  @media (prefers-color-scheme: dark) { th, td { border-color: #3d444d; } th { background: #151b23; } }
-  h1, h2 { border-bottom: 1px solid #d0d7de; padding-bottom: 0.3em; }
-  @media (prefers-color-scheme: dark) { h1, h2 { border-color: #3d444d; } }
+
+  .wrap { max-width: 72rem; margin: 0 auto; padding: 0 1.25rem; }
+
+  header {
+    padding: 3.5rem 0 2.5rem;
+    border-bottom: 1px solid var(--border);
+    background:
+      radial-gradient(60rem 18rem at 15% -20%, rgba(77, 214, 255, 0.12), transparent 70%),
+      radial-gradient(50rem 16rem at 85% -30%, rgba(176, 109, 255, 0.12), transparent 70%);
+  }
+  header .wrap { display: flex; flex-wrap: wrap; gap: 1rem 2rem; align-items: end; justify-content: space-between; }
+  h1 {
+    margin: 0;
+    font-size: clamp(2rem, 5vw, 3rem);
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    background: linear-gradient(90deg, #ff4d6d, #ffb84d, #4dd6ff, #b06dff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .tagline { margin: 0.5rem 0 0; color: var(--muted); max-width: 34rem; }
+  .header-links { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+  .header-links a { color: var(--text); font-size: 0.9rem; }
+  .header-links a:hover { color: var(--accent); }
+
+  #pauseBtn {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.4rem 1rem;
+    font: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+  #pauseBtn:hover { color: var(--text); border-color: var(--accent); }
+
+  main { padding: 2rem 0 1rem; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 26rem), 1fr));
+    gap: 1.5rem;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .frame {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    background: #000;
+    border-bottom: 1px solid var(--border);
+  }
+  .frame iframe {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    display: block;
+  }
+  /* Off-screen or globally paused previews are display:none, which stalls
+     their requestAnimationFrame loop and frees the GPU. */
+  .frame.off, body.paused .frame { display: none; }
+  .frame::after {  /* placeholder until the iframe loads */
+    content: "loading shader…";
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background:
+      linear-gradient(transparent 9px, rgba(255,255,255,0.03) 10px) 0 0 / 100% 10px,
+      #05070a;
+    pointer-events: none;
+  }
+  .frame.live::after { content: none; background: none; }
+
+  .meta { padding: 1rem 1.1rem 1.1rem; display: flex; flex-direction: column; gap: 0.45rem; }
+  .meta h2 { margin: 0; font-size: 1.05rem; letter-spacing: -0.01em; }
+  .meta h2 a { color: var(--text); }
+  .meta h2 a:hover { color: var(--accent); }
+  .meta h2 .tag {
+    margin-left: 0.5rem;
+    vertical-align: 2px;
+    font-size: 0.68rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    border-radius: 999px;
+    padding: 0.1rem 0.5rem;
+  }
+  .desc { margin: 0; color: var(--muted); font-size: 0.9rem; }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .links { display: flex; gap: 1rem; font-size: 0.85rem; margin-top: 0.15rem; }
+
+  footer {
+    margin-top: 2.5rem;
+    padding: 1.5rem 0 3rem;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 0.75rem 2rem; justify-content: space-between; }
 </style>
 </head>
 <body>
-<h1>GLSL</h1>
-<p>A collection of raw WebGL / GLSL shader experiments — each one a self-contained HTML file you can open directly in a browser.</p>
-<p><strong>Repository:</strong> <a href="https://github.com/razodin137/GLSL">razodin137/GLSL</a></p>
-<h2>Shaders</h2>
-<p>Live in the <a href="./shaders"><code>shaders/</code></a> directory:</p>
-<ul>
-<li><a href="./shaders/rainbowshader.html">rainbowshader.html</a> — &quot;Neon Goo Landing&quot;: a rainbow animated goo effect.</li>
-<li><a href="./shaders/liquidrainbow-text-shader.html">liquidrainbow-text-shader.html</a> — liquid rainbow text shader.</li>
-<li><a href="./shaders/nebula-heatmap.html">nebula-heatmap.html</a> — a nebula heatmap with noise functions, reacting to resolution, mouse, and time.</li>
-<li><a href="./shaders/voronoi-tide.html">voronoi-tide.html</a> — &quot;Voronoi Tide&quot;: drifting Voronoi cells with glowing borders; mouse controls cell density and tide energy.</li>
-<li><a href="./shaders/raymarched-orbs.html">raymarched-orbs.html</a> — &quot;Chrome Orbit&quot;: raymarched spheres circling a core with an iridescent sheen; mouse orbits and elevates the camera.</li>
-<li><a href="./shaders/kaleidoscope-bloom.html">kaleidoscope-bloom.html</a> — &quot;Kaleido Bloom&quot;: a mirrored kaleidoscope of layered sine interference; mouse controls segment count and zoom.</li>
-<li><a href="./shaders/aurora-veil.html">aurora-veil.html</a> — &quot;Aurora Veil&quot;: northern-lights curtains over a twinkling star field; mouse controls drift speed and hue.</li>
-<li><a href="./shaders/warp-starfield.html">warp-starfield.html</a> — &quot;Hyperspace Drift&quot;: a warp-speed starfield with radial light trails; mouse controls speed and field spread.</li>
-</ul>
-<p>Each file contains its own vertex and fragment shaders plus the JavaScript to run them — no build step, no dependencies.</p>
-<h2>System prompt</h2>
-<ul>
-<li><a href="./system-prompts/GLSL-creator-system-prompt.md">system-prompts/GLSL-creator-system-prompt.md</a> — a system prompt for an expert creative coder / graphics engineer persona that outputs single self-contained HTML files with CSS, JavaScript, and GLSL. This is the prompt that generated the shaders in this repo.</li>
-</ul>
+
+<header>
+  <div class="wrap">
+    <div>
+      <h1>GLSL</h1>
+      <p class="tagline">Raw WebGL / GLSL experiments — each a single self-contained HTML file.
+      Previews below are live and interactive: move your mouse over them.</p>
+    </div>
+    <nav class="header-links">
+      <a href="https://github.com/razodin137/GLSL">GitHub</a>
+      <a href="./shaders/">shaders/</a>
+      <a href="./system-prompts/GLSL-creator-system-prompt.md">system prompt</a>
+      <button id="pauseBtn" type="button">Pause previews</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <section class="grid">
+
+      <article class="card">
+        <div class="frame">
+          <iframe data-src="./shaders/raymarched-orbs.html" title="Chrome Orbit — live shader preview" scrolling="no"></iframe>
+        </div>
+        <div class="meta">
+          <h2><a href="./shaders/raymarched-orbs.html">Chrome Orbit</a></h2>
+          <p class="desc">Raymarched chrome spheres circling a glowing core with an iridescent sheen.</p>
+          <div class="controls"><span>↔ orbit camera</span><span>↕ camera height</span></div>
+          <div class="links">
+            <a href="./shaders/raymarched-orbs.html">Fullscreen</a>
+            <a href="https://github.com/razodin137/GLSL/blob/main/shaders/raymarched-orbs.html" target="_blank" rel="noopener">Source</a>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="frame">
+          <iframe data-src="./shaders/kaleidoscope-bloom.html" title="Kaleido Bloom — live shader preview" scrolling="no"></iframe>
+        </div>
+        <div class="meta">
+          <h2><a href="./shaders/kaleidoscope-bloom.html">Kaleido Bloom</a></h2>
+          <p class="desc">Layered sine interference folded into a mirrored, ever-blooming kaleidoscope.</p>
+          <div class="controls"><span>↔ mirror segments</span><span>↕ zoom</span></div>
+          <div class="links">
+            <a href="./shaders/kaleidoscope-bloom.html">Fullscreen</a>
+            <a href="https://github.com/razodin137/GLSL/blob/main/shaders/kaleidoscope-bloom.html" target="_blank" rel="noopener">Source</a>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="frame">
+          <iframe data-src="./shaders/aurora-veil.html" title="Aurora Veil — live shader preview" scrolling="no"></iframe>
+        </div>
+        <div class="meta">
+          <h2><a href="./shaders/aurora-veil.html">Aurora Veil</a></h2>
+          <p class="desc">Northern-lights curtains rippling over a twinkling star field.</p>
+          <div class="controls"><span>↔ drift speed</span><span>↕ hue shift</span></div>
+          <div class="links">
+            <a href="./shaders/aurora-veil.html">Fullscreen</a>
+            <a href="https://github.com/razodin137/GLSL/blob/main/shaders/aurora-veil.html" target="_blank" rel="noopener">Source</a>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="frame">
+          <iframe data-src="./shaders/voronoi-tide.html" title="Voronoi Tide — live shader preview" scrolling="no"></iframe>
+        </div>
+        <div class="meta">
+          <h2><a href="./shaders/voronoi-tide.html">Voronoi Tide</a></h2>
+          <p class="desc">Drifting Voronoi cells with softly glowing borders.</p>
+          <div class="controls"><span>↔ cell density</span><span>↕ tide energy</span></div>
+          <div class="links">
+            <a href="./shaders/voronoi-tide.html">Fullscreen</a>
+            <a href="https://github.com/razodin137/GLSL/blob/main/shaders/voronoi-tide.html" target="_blank" rel="noopener">Source</a>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="frame">
+          <iframe data-src="./shaders/warp-starfield.html" title="Hyperspace Drift — live shader preview" scrolling="no"></iframe>
+        </div>
+        <div class="meta">
+          <h2><a href="./shaders/warp-starfield.html">Hyperspace Drift</a></h2>
+          <p class="desc">Warp-speed starfield with radial light trails.</p>
+          <div class="controls"><span>↔ warp speed</span><span>↕ field spread</span></div>
+          <div class="links">
+            <a href="./shaders/warp-starfield.html">Fullscreen</a>
+            <a href="https://github.com/razodin137/GLSL/blob/main/shaders/warp-starfield.html" target="_blank" rel="noopener">Source</a>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="frame">
+          <iframe data-src="./shaders/nebula-heatmap.html" title="Nebula Heatmap — live shader preview" scrolling="no"></iframe>
+        </div>
+        <div class="meta">
+          <h2><a href="./shaders/nebula-heatmap.html">Nebula Heatmap</a></h2>
+          <p class="desc">Layered noise warped into a glowing nebula, rendered like a heat map.</p>
+          <div class="controls"><span>↔ zoom</span><span>↕ warp intensity</span></div>
+          <div class="links">
+            <a href="./shaders/nebula-heatmap.html">Fullscreen</a>
+            <a href="https://github.com/razodin137/GLSL/blob/main/shaders/nebula-heatmap.html" target="_blank" rel="noopener">Source</a>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="frame">
+          <iframe data-src="./shaders/rainbowshader.html" title="Neon Goo Landing — live shader preview" scrolling="no"></iframe>
+        </div>
+        <div class="meta">
+          <h2><a href="./shaders/rainbowshader.html">Neon Goo Landing</a> <span class="tag">landing demo</span></h2>
+          <p class="desc">Landing-page demo: rainbow goo flowing behind big type.</p>
+          <div class="controls"><span>↔ distortion intensity</span><span>↕ spectrum shift</span></div>
+          <div class="links">
+            <a href="./shaders/rainbowshader.html">Fullscreen</a>
+            <a href="https://github.com/razodin137/GLSL/blob/main/shaders/rainbowshader.html" target="_blank" rel="noopener">Source</a>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="frame">
+          <iframe data-src="./shaders/liquidrainbow-text-shader.html" title="Liquid Type — live shader preview" scrolling="no"></iframe>
+        </div>
+        <div class="meta">
+          <h2><a href="./shaders/liquidrainbow-text-shader.html">Liquid Type</a> <span class="tag">landing demo</span></h2>
+          <p class="desc">Landing-page demo: liquid rainbow rippling behind the headline.</p>
+          <div class="controls"><span>↔ color spectrum</span><span>↕ turbulence speed</span></div>
+          <div class="links">
+            <a href="./shaders/liquidrainbow-text-shader.html">Fullscreen</a>
+            <a href="https://github.com/razodin137/GLSL/blob/main/shaders/liquidrainbow-text-shader.html" target="_blank" rel="noopener">Source</a>
+          </div>
+        </div>
+      </article>
+
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>No build step, no dependencies — every shader is one HTML file with its own vertex shader, fragment shader, and JavaScript harness.</span>
+    <span><a href="https://github.com/razodin137/GLSL">razodin137/GLSL</a></span>
+  </div>
+</footer>
+
+<script>
+  // Load previews just before they scroll into view and park them when far
+  // away, so at most a few WebGL contexts ever run at once.
+  const io = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      const frame = entry.target;
+      const iframe = frame.querySelector('iframe');
+      if (entry.isIntersecting) {
+        if (iframe.dataset.src) {
+          iframe.src = iframe.dataset.src;
+          delete iframe.dataset.src;
+          iframe.addEventListener('load', () => frame.classList.add('live'), { once: true });
+        }
+        frame.classList.remove('off');
+      } else {
+        frame.classList.add('off');
+      }
+    }
+  }, { rootMargin: '600px 0px' });
+  document.querySelectorAll('.frame').forEach(f => io.observe(f));
+
+  // Global pause: display:none stalls every iframe's rAF loop.
+  const pauseBtn = document.getElementById('pauseBtn');
+  pauseBtn.addEventListener('click', () => {
+    const paused = document.body.classList.toggle('paused');
+    pauseBtn.textContent = paused ? 'Resume previews' : 'Pause previews';
+  });
+</script>
 
 </body>
 </html>

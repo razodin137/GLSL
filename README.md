@@ -4,6 +4,8 @@ A collection of raw WebGL / GLSL shader experiments — each one a self-containe
 
 **Repository:** [razodin137/GLSL](https://github.com/razodin137/GLSL)
 
+**Live gallery:** <https://razodin137.github.io/GLSL/>
+
 ## Shaders
 
 Live in the [`shaders/`](./shaders) directory:
